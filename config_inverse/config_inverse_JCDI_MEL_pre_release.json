@@ -1,0 +1,28 @@
+{   
+    "diffusion_config":{
+        "T": 200,
+        "beta_0": 0.0001,
+        "beta_T": 0.005
+    },
+    "train_config": {
+        "output_directory": "./results/JCDI_MEL",
+        "ckpt_iter": "max",
+        "iters_per_ckpt": 500000,
+        "iters_per_logging": 200,
+        "n_iters": 8000000,
+        "learning_rate": 1e-4,
+        "use_model": 0
+    },
+    "trainset_config":{
+        "train_data_path": "./data_set_inverse/data_gene_for_eventmore3_merge_theta30sobol_paramirg5s_uvec_traj512_trs_long_Fsum1_300000.mat",
+        "sample_data_path": "./data_set_inverse/data_gene_for_eventmore3_merge_theta30sobol_paramirg5s_uvec_traj512_trs_long_Fsum1_300000.mat",
+        "test_data_path": "./data_set_inverse/data_gene_for_eventmore3_merge_theta30sobol_paramirg5s_uvec_traj512_trs_long_Fsum1_300000.mat",
+        "real_sp_data_path": "./data_set_inverse/data_real_eventmore3_merge_theta30sobol_paramirg5s_uvec_traj512_trs_long_Fsum1_5000.mat",
+        "segment_length":30,
+        "sampling_rate": 1
+    },
+    "gen_config":{
+        "output_directory": "./results/JCDI_MEL",
+        "ckpt_path": "./results/JCDI_MEL/"
+    }
+}
