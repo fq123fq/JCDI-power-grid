@@ -4,7 +4,7 @@ conda env create -f JCDI_env.yaml
 ```
 
 ## Datasets
-* Dataset in our experiment can be downloaded at [this link](https:xxxxxx).
+* Dataset in our experiment can be downloaded at [this link](https://drive.google.com/drive/folders/1_ntBnNasDw7eaLQs3zlGaPJ9-GpB4BFa?usp=sharing).
 * Put the data files in the folder "data_set_inverse“.
 
 ## Train JCDI
