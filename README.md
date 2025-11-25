@@ -1,3 +1,5 @@
+This is the repository for the preprint [Diffusion Model-based Parameter Estimation in Dynamic Power Systems](https://arxiv.org/abs/2411.10431)
+
 ## Install the requiered libraries 
 ```
 conda env create -f JCDI_env.yaml
