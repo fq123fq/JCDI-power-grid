@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from   torch.utils.data import TensorDataset, DataLoader, Subset
+
 from utils.util_pre_release import find_max_epoch, print_size, training_loss, calc_diffusion_hyperparams
 
 
@@ -55,7 +57,216 @@ RESNET_BLOCK_SPECS = [
     ## curr shape: (512, 3),2
 ]
 
+def norm_traj(traj, norm = None):
+    if norm is None:
+        traj_min = torch.min(traj)
+        traj_max = torch.max(traj)
+        norm     = (traj_min, traj_max)
+    else:
+        (traj_min, traj_max) = norm
 
+    result = (traj - traj_min) / (traj_max - traj_min)
+
+    return (result, norm)
+
+def norm_traj_bundle(traj_bundle, norm = None):
+    # traj_bundle : (N, n_traj, L)
+    n_traj = traj_bundle.shape[1]
+
+    if norm is None:
+        norm = [ None, ] * n_traj
+
+    norm_list      = []
+    norm_traj_list = []
+
+    # norm_traj_list : List[ (N, L) ]
+    for i in range(n_traj):
+        traj_norm_i, norm_i = norm_traj(traj_bundle[:, i], norm[i])
+        norm_list.append(norm_i)
+        norm_traj_list.append(traj_norm_i)
+
+    # result : (N, n_traj, L)
+    result = torch.stack(norm_traj_list, dim = 1)
+
+    return (result, norm_list)
+
+def load_dataset(
+    path,
+    norm_p     = None,
+    norm_q     = None,
+    key_params = 'para_for_gene_eventmore_merge_trs_nom',
+    key_traj_p = 'traj_p_gene_eventmore_merge_trs',
+    key_traj_q = 'traj_q_gene_eventmore_merge_trs',
+):
+    # pylint: disable=too-many-arguments
+    data = mat73.loadmat(path)
+
+    # params : (N, n_params)
+    params = data[key_params]
+
+    # traj_p : (N, n_traj, L)
+    # traj_q : (N, n_traj, L)
+    traj_p = data[key_traj_p]
+    traj_q = data[key_traj_q]
+
+    params = torch.from_numpy(params).float()
+    traj_p = torch.from_numpy(traj_p).float()
+    traj_q = torch.from_numpy(traj_q).float()
+
+    # traj_p_norm : (N, n_traj, L)
+    # traj_q_norm : (N, n_traj, L)
+    traj_p_norm, norm_p = norm_traj_bundle(traj_p, norm_p)
+    traj_q_norm, norm_q = norm_traj_bundle(traj_q, norm_q)
+
+    # traj_norm : List[ (N, 2, L) ]
+    traj_norm = [
+        torch.stack([ traj_p_norm[:, i], traj_q_norm[:, i] ], dim = 1)
+            for i in range(traj_p_norm.shape[1])
+    ]
+
+    # traj_norm : List[ (N, n_traj, 2, L) ]
+    traj_norm = torch.stack(traj_norm, dim = 1)
+
+    # params : (N, 1, n_params)
+    params = params.unsqueeze(1)
+
+    return (traj_norm, params, norm_p, norm_q)
+
+def construct_train_test_datasets(
+    path,
+    n_train     = 250000,
+    n_test      = 50000,
+    norm_p      = None,
+    norm_q      = None,
+    key_params  = 'para_for_gene_eventmore_merge_trs_nom',
+    key_traj_p  = 'traj_p_gene_eventmore_merge_trs',
+    key_traj_q  = 'traj_q_gene_eventmore_merge_trs',
+):
+    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-locals
+
+    (traj_norm_all, params_all, norm_p, norm_q) = load_dataset(
+        path, norm_p, norm_q, key_params, key_traj_p, key_traj_q,
+    )
+
+    params_train = params_all[:n_train]
+    params_test  = params_all[n_train:n_train+n_test]
+
+    traj_norm_train = traj_norm_all[:n_train]
+    traj_norm_test  = traj_norm_all[n_train:n_train+n_test]
+
+    dset_train = TensorDataset(params_train, traj_norm_train)
+    dset_test  = TensorDataset(params_test,  traj_norm_test)
+
+    return (dset_train, dset_test, norm_p, norm_q)
+
+def construct_train_test_dl(
+    path,
+    batch_size_train = 128,
+    batch_size_test  = 128,
+    n_train          = 250000,
+    n_test           = 50000,
+    norm_p           = None,
+    norm_q           = None,
+    key_params       = 'para_for_gene_eventmore_merge_trs_nom',
+    key_traj_p       = 'traj_p_gene_eventmore_merge_trs',
+    key_traj_q       = 'traj_q_gene_eventmore_merge_trs',
+    stride_test      = 50,
+    workers          = 1,
+    use_strided_train_dataset = True,
+):
+    # pylint: disable=too-many-arguments
+
+    (dset_train, dset_test, norm_p, norm_q) = construct_train_test_datasets(
+        path, n_train, n_test, norm_p, norm_q, key_params,
+        key_traj_p, key_traj_q
+    )
+
+    dl_train = DataLoader(
+        dset_train,
+        batch_size  = batch_size_train,
+        shuffle     = True,
+        pin_memory  = True,
+        num_workers = workers
+    )
+
+    if stride_test != 1:
+        strided_indices = range(0, len(dset_test), stride_test)
+        dset_test       = Subset(dset_test, strided_indices)
+
+    dl_test = DataLoader(
+        dset_test,
+        batch_size  = batch_size_test,
+        shuffle     = False,
+        pin_memory  = True,
+        num_workers = workers
+    )
+
+    dl_train_stride = None
+
+    if use_strided_train_dataset:
+        strided_indices   = range(0, len(dset_train), stride_test)
+        dset_train_stride = Subset(dset_train, strided_indices)
+
+        dl_train_stride = DataLoader(
+            dset_train_stride,
+            batch_size  = batch_size_test,
+            shuffle     = False,
+            pin_memory  = True,
+            num_workers = workers
+        )
+
+    return (dl_train, dl_test, dl_train_stride, norm_p, norm_q)
+
+def construct_dataset(
+    path,
+    n_samples   = 50000,
+    norm_p      = None,
+    norm_q      = None,
+    key_params  = 'para_for_gene_eventmore_merge_trs_nom',
+    key_traj_p  = 'traj_p_gene_eventmore_merge_trs',
+    key_traj_q  = 'traj_q_gene_eventmore_merge_trs',
+):
+    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-locals
+    (traj_norm, params, norm_p, norm_q) = load_dataset(
+        path, norm_p, norm_q, key_params, key_traj_p, key_traj_q,
+    )
+
+    if n_samples is not None:
+        traj_norm = traj_norm[:n_samples]
+        params    = params[:n_samples]
+
+    dataset = TensorDataset(params, traj_norm)
+
+    return (dataset, norm_p, norm_q)
+
+def construct_dl(
+    path,
+    batch_size = 128,
+    n_samples  = 5000,
+    norm_p     = None,
+    norm_q     = None,
+    key_params = 'para_for_gene_eventmore_merge_trs_nom',
+    key_traj_p = 'traj_p_gene_eventmore_merge_trs',
+    key_traj_q = 'traj_q_gene_eventmore_merge_trs',
+    shuffle    = False,
+    workers    = 1,
+):
+    # pylint: disable=too-many-arguments
+    (dataset, norm_p, norm_q) = construct_dataset(
+        path, n_samples, norm_p, norm_q, key_params, key_traj_p, key_traj_q
+    )
+
+    result = DataLoader(
+        dataset,
+        batch_size  = batch_size,
+        shuffle     = shuffle,
+        pin_memory  = True,
+        num_workers = workers
+    )
+
+    return (result, norm_p, norm_q)
 
 def train(output_directory,
           ckpt_iter,
@@ -110,215 +321,42 @@ def train(output_directory,
     
 
     ##########################################data preparation##########################################
-    import scipy.io as scio
-    #data = scio.loadmat(trainset_config['train_data_path'])
-    data = mat73.loadmat(trainset_config['train_data_path'])
-    para_for_gene_eventmore_merge_trs_nom = data['para_for_gene_eventmore_merge_trs_nom']
-    traj_p_gene_eventmore_merge_trs = data['traj_p_gene_eventmore_merge_trs']
-    traj_q_gene_eventmore_merge_trs = data['traj_q_gene_eventmore_merge_trs']
+    para_length_fq = 30
+    traj_length_fq = 512
+    n_events       = 3
 
+    print('Loading Train/Test dataset...')
+    (dl_train, dl_test, dl_train_stride, norm_p, norm_q) = \
+        construct_train_test_dl(
+            path             = trainset_config['train_data_path'],
+            batch_size_train = 128,
+            batch_size_test  = 128,
+            n_train          = 250000,
+            n_test           = 50000,
+            norm_p           = None,
+            norm_q           = None,
+            key_params       = 'para_for_gene_eventmore_merge_trs_nom',
+            key_traj_p       = 'traj_p_gene_eventmore_merge_trs',
+            key_traj_q       = 'traj_q_gene_eventmore_merge_trs',
+            stride_test      = 50,
+            workers          = 1,
+            use_strided_train_dataset = True,
+        )
 
-    #   training_data = np.split(training_data, 42, 0)
-    para_for_gene_eventmore_merge_trs_nom = torch.from_numpy(para_for_gene_eventmore_merge_trs_nom).float()
-    traj_p_gene_eventmore_merge_trs = torch.from_numpy(traj_p_gene_eventmore_merge_trs).float()
-    traj_q_gene_eventmore_merge_trs = torch.from_numpy(traj_q_gene_eventmore_merge_trs).float()
+    print('Loading Real data dataset...')
 
-    num_sample_all=300000
-    num_sample_train=250000
-    num_sample_test=50000
-
-    para_length_fq=30
-    traj_length_fq=512
-
-
-    print("traj_p_gene_eventmore_merge_trs.shape",traj_p_gene_eventmore_merge_trs.shape)
-    n_events=traj_p_gene_eventmore_merge_trs.shape[1]
-    print("n_events",n_events)
-
-    #training_traj_pq_eventmore=torch.empty((num_sample_all,n_events,2,traj_length_fq))
-    traj_p_mins=[]
-    traj_p_maxs=[]
-    traj_q_mins=[]
-    traj_q_maxs=[]
-    for ii in range(n_events):
-        traj_p_gene_eventnow_merge_trs=traj_p_gene_eventmore_merge_trs[:,ii,:].unsqueeze(1)
-        traj_q_gene_eventnow_merge_trs=traj_q_gene_eventmore_merge_trs[:,ii,:].unsqueeze(1)
-        print("traj_p_gene_eventnow_merge_trs.shape",traj_p_gene_eventnow_merge_trs.shape)
-        traj_p_min_min=torch.min(traj_p_gene_eventmore_merge_trs)
-        traj_p_max_max=torch.max(traj_p_gene_eventmore_merge_trs)
-        traj_q_min_min=torch.min(traj_q_gene_eventmore_merge_trs)
-        traj_q_max_max=torch.max(traj_q_gene_eventmore_merge_trs)
-
-        traj_p_eventnow_min=torch.min(torch.min(traj_p_gene_eventnow_merge_trs))
-        traj_p_eventnow_max=torch.max(torch.max(traj_p_gene_eventnow_merge_trs))
-        traj_q_eventnow_min=torch.min(torch.min(traj_q_gene_eventnow_merge_trs))
-        traj_q_eventnow_max=torch.max(torch.max(traj_q_gene_eventnow_merge_trs))
-
-        print("traj_p_eventnow_min",traj_p_eventnow_min)
-        print("traj_q_eventnow_min",traj_q_eventnow_min)
-        
-
-        traj_p_mins.append(torch.min(torch.min(traj_p_gene_eventnow_merge_trs)))
-        traj_p_maxs.append(torch.max(torch.max(traj_p_gene_eventnow_merge_trs)))
-        traj_q_mins.append(torch.min(torch.min(traj_q_gene_eventnow_merge_trs)))
-        traj_q_maxs.append(torch.max(torch.max(traj_q_gene_eventnow_merge_trs)))
-        
-        #traj_p_gene_eventnow_merge_trs_nom=(traj_p_gene_eventnow_merge_trs - traj_p_min_min) / (traj_p_max_max - traj_p_min_min)
-        #traj_q_gene_eventnow_merge_trs_nom=(traj_q_gene_eventnow_merge_trs - traj_q_min_min) / (traj_q_max_max - traj_q_min_min)
-
-        traj_p_gene_eventnow_merge_trs_nom=(traj_p_gene_eventnow_merge_trs - traj_p_eventnow_min) / (traj_p_eventnow_max - traj_p_eventnow_min)
-        traj_q_gene_eventnow_merge_trs_nom=(traj_q_gene_eventnow_merge_trs - traj_q_eventnow_min) / (traj_q_eventnow_max - traj_q_eventnow_min)
-
-
-        traj_pq_gene_eventnow_merge_trs_nom = torch.cat([traj_p_gene_eventnow_merge_trs_nom, traj_q_gene_eventnow_merge_trs_nom], dim=1)
-        print("traj_pq_gene_eventnow_merge_trs_nom.shape",traj_pq_gene_eventnow_merge_trs_nom.shape)
-        print("torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom,1).shape",torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom,1).shape)
-        if ii==0:
-            traj_pq_gene_eventmore_merge_trs_nom=torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom,1)
-        else:
-            traj_pq_gene_eventmore_merge_trs_nom=torch.cat([traj_pq_gene_eventmore_merge_trs_nom,torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom,1)],dim=1)
-            
-        #training_traj_pq_eventmore=torch.stack (training_traj_pq_eventmore,torch.unsqueeze(traj_pq_gene_eventnow_merge_trs,1),dim=1)
-        print("traj_pq_gene_eventmore_merge_trs_nom.shape",traj_pq_gene_eventmore_merge_trs_nom.shape)
-
-    traj_pq_gene_eventmore_merge_trs_nom_each=torch.unbind(traj_pq_gene_eventmore_merge_trs_nom,dim=1)
-    print("len(traj_pq_gene_eventmore_merge_trs_nom_each)",len(traj_pq_gene_eventmore_merge_trs_nom_each))
-    print("traj_pq_gene_eventmore_merge_trs_nom_each[0].shape",traj_pq_gene_eventmore_merge_trs_nom_each[0].shape)
-
-    print("traj_p_min_min",traj_p_min_min)
-    print("traj_p_max_max",traj_p_max_max)
-    print("traj_q_min_min",traj_q_min_min)
-    print("traj_q_max_max",traj_q_max_max)
-
-    print("traj_p_mins",traj_p_mins)
-    print("traj_p_mins[ii]",traj_p_mins[ii])
-    print("traj_p_maxs",traj_p_maxs)
-    print("traj_q_mins",traj_q_mins)
-    print("traj_q_maxs",traj_q_maxs)
-
-
-
-    para_for_gene_eventmore_merge_trs_nom = torch.reshape(para_for_gene_eventmore_merge_trs_nom, (num_sample_all, 1, para_length_fq))
-
-    training_para = para_for_gene_eventmore_merge_trs_nom[:num_sample_train,:,:]
-    testing_para = para_for_gene_eventmore_merge_trs_nom[num_sample_train:num_sample_all,:,:]
-
-    print("training_para size:", training_para.shape)
-    print("testing_para size:", testing_para.shape)
-
-    print("training_para:", training_para)
-
-
-    training_traj_pq=traj_pq_gene_eventmore_merge_trs_nom[:num_sample_train,:,:,:]
-
-    testing_traj_pq=traj_pq_gene_eventmore_merge_trs_nom[num_sample_train:num_sample_all,:,:,:]
-    #testing_traj_pq=testing_traj_pq[:num_sample_test, :,:]
-
-
-    print("training_traj_pq size:", training_traj_pq.shape)
-    print("testing_traj_pq size:", testing_traj_pq.shape)
-
-
-    import torch.utils.data as Data
-    from torch.utils.data import DataLoader
-    # create dataloader
-    #torch_dataset = Data.TensorDataset(training_para,training_traj_pq,training_time)
-    #torch_test_dataset = Data.TensorDataset(testing_para,testing_traj_pq,testing_time)
-
-    torch_dataset = Data.TensorDataset(training_para,training_traj_pq)
-    #torch_test_dataset = Data.TensorDataset(testing_para,testing_traj_pq)
-    torch_train_sp_dataset = Data.TensorDataset(training_para[::50,:,:],training_traj_pq[::50,:,:,:])
-    torch_test_dataset = Data.TensorDataset(testing_para[::50,:,:],testing_traj_pq[::50,:,:,:])
-
-
-    train_batch_size=128
-    test_batch_size=128
-
-
-    loader = DataLoader(torch_dataset, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = 0)
-    train_sp_loader = DataLoader(torch_train_sp_dataset, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = 0)
-    test_loader = DataLoader(torch_test_dataset, batch_size = test_batch_size, shuffle = True, pin_memory = True, num_workers = 0)
-
-
-    #training_data = torch.reshape(training_data, (31, 32, seq_length_fq, num_feature))
-    #print("training_data size:", training_data.shape)
-    print('Data loaded')
-
-    ####real  data preparation####
-    #import scipy.io as scio
-    #data = scio.loadmat(trainset_config['real_sp_data_path'])
-    data = mat73.loadmat(trainset_config['real_sp_data_path'])
-    para_for_gene_eventmore_merge_trs_nom_real = data['para_real_eventmore_merge_trs_nom']
-    traj_p_gene_eventmore_merge_trs_real = data['traj_p_real_eventmore_merge_trs']
-    traj_q_gene_eventmore_merge_trs_real = data['traj_q_real_eventmore_merge_trs']
-
-
-    #   training_data = np.split(training_data, 42, 0)
-    para_for_gene_eventmore_merge_trs_nom_real = torch.from_numpy(para_for_gene_eventmore_merge_trs_nom_real).float()
-    traj_p_gene_eventmore_merge_trs_real = torch.from_numpy(traj_p_gene_eventmore_merge_trs_real).float()
-    traj_q_gene_eventmore_merge_trs_real = torch.from_numpy(traj_q_gene_eventmore_merge_trs_real).float()
-
-    num_sample_real_all=5000
-
-    para_length_fq=30
-    traj_length_fq=512
-
-    #training_traj_pq_eventmore=torch.empty((num_sample_all,n_events,2,traj_length_fq))
-
-    for ii in range(n_events):
-        traj_p_gene_eventnow_merge_trs_real=traj_p_gene_eventmore_merge_trs_real[:,ii,:].unsqueeze(1)
-        traj_q_gene_eventnow_merge_trs_real=traj_q_gene_eventmore_merge_trs_real[:,ii,:].unsqueeze(1)
-        print("traj_p_gene_eventnow_merge_trs_real.shape",traj_p_gene_eventnow_merge_trs_real.shape)
-        
-        #traj_p_gene_eventnow_merge_trs_nom=(traj_p_gene_eventnow_merge_trs - traj_p_min_min) / (traj_p_max_max - traj_p_min_min)
-        #traj_q_gene_eventnow_merge_trs_nom=(traj_q_gene_eventnow_merge_trs - traj_q_min_min) / (traj_q_max_max - traj_q_min_min)
-
-        #traj_p_gene_eventnow_merge_trs_nom_real=(traj_p_gene_eventnow_merge_trs_real - traj_p_eventnow_min) / (traj_p_eventnow_max - traj_p_eventnow_min)
-        #traj_q_gene_eventnow_merge_trs_nom_real=(traj_q_gene_eventnow_merge_trs_real - traj_q_eventnow_min) / (traj_q_eventnow_max - traj_q_eventnow_min)
-
-        traj_p_gene_eventnow_merge_trs_nom_real=(traj_p_gene_eventnow_merge_trs_real - traj_p_mins[ii]) / (traj_p_maxs[ii] - traj_p_mins[ii])
-        traj_q_gene_eventnow_merge_trs_nom_real=(traj_q_gene_eventnow_merge_trs_real - traj_q_mins[ii]) / (traj_q_maxs[ii] - traj_q_mins[ii])
-
-        traj_pq_gene_eventnow_merge_trs_nom_real = torch.cat([traj_p_gene_eventnow_merge_trs_nom_real, traj_q_gene_eventnow_merge_trs_nom_real], dim=1)
-        print("traj_pq_gene_eventnow_merge_trs_nom_real.shape",traj_pq_gene_eventnow_merge_trs_nom_real.shape)
-        print("torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom_real,1).shape",torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom_real,1).shape)
-        if ii==0:
-            traj_pq_gene_eventmore_merge_trs_nom_real=torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom_real,1)
-        else:
-            traj_pq_gene_eventmore_merge_trs_nom_real=torch.cat([traj_pq_gene_eventmore_merge_trs_nom_real,torch.unsqueeze(traj_pq_gene_eventnow_merge_trs_nom_real,1)],dim=1)
-            
-        #training_traj_pq_eventmore=torch.stack (training_traj_pq_eventmore,torch.unsqueeze(traj_pq_gene_eventnow_merge_trs,1),dim=1)
-        print("traj_pq_gene_eventmore_merge_trs_nom_real.shape",traj_pq_gene_eventmore_merge_trs_nom_real.shape)
-
-    traj_pq_gene_eventmore_merge_trs_nom_each_real=torch.unbind(traj_pq_gene_eventmore_merge_trs_nom_real,dim=1)
-    print("len(traj_pq_gene_eventmore_merge_trs_nom_each_real)",len(traj_pq_gene_eventmore_merge_trs_nom_each_real))
-    print("traj_pq_gene_eventmore_merge_trs_nom_each_real[0].shape",traj_pq_gene_eventmore_merge_trs_nom_each_real[0].shape)
-
-
-    para_for_gene_eventmore_merge_trs_nom_real = torch.reshape(para_for_gene_eventmore_merge_trs_nom_real, (num_sample_real_all, 1, para_length_fq))
-
-    real_para = para_for_gene_eventmore_merge_trs_nom_real[:num_sample_real_all,:,:]
-
-    print("real_para size:", real_para.shape)
-
-    real_traj_pq=traj_pq_gene_eventmore_merge_trs_nom_real[:num_sample_real_all,:,:,:]
-
-    #testing_traj_pq=testing_traj_pq[:num_sample_test, :,:]
-
-    print("real_traj_pq size:", real_traj_pq.shape)
-
-
-    import torch.utils.data as Data
-    from torch.utils.data import DataLoader
-    # create dataloader
-    #torch_dataset = Data.TensorDataset(training_para,training_traj_pq,training_time)
-    #torch_test_dataset = Data.TensorDataset(testing_para,testing_traj_pq,testing_time)
-
-    torch_real_dataset = Data.TensorDataset(real_para,real_traj_pq)
-
-    real_batch_size=128
-
-    real_sp_loader = DataLoader(torch_real_dataset, batch_size = real_batch_size, shuffle = True, pin_memory = True, num_workers = 0)
+    (dl_real, _norm_p, _norm_q) = construct_dl(
+        path       = trainset_config['real_sp_data_path'],
+        batch_size = 128,
+        n_samples  = 5000,
+        norm_p     = norm_p,
+        norm_q     = norm_q,
+        key_params = 'para_real_eventmore_merge_trs_nom',
+        key_traj_p = 'traj_p_real_eventmore_merge_trs',
+        key_traj_q = 'traj_q_real_eventmore_merge_trs',
+        shuffle    = False,
+        workers    = 1,
+    )
 
     # predefine model
     if use_model == 0:
@@ -326,7 +364,7 @@ def train(output_directory,
         net = PowerGridHybrid(
           #traj_shape = (2, 192),
          traj_shape = (2, traj_length_fq),
-         n_events=n_events,
+         n_events   = n_events,
          n_params   = para_length_fq,
          resnet_params = {
              'block_specs' : RESNET_BLOCK_SPECS,
@@ -405,7 +443,7 @@ def train(output_directory,
         ema.ema_model.train()
         epoch_train_loss=0
 
-        for i, (batch_para, batch_traj) in enumerate(loader):
+        for i, (batch_para, batch_traj) in enumerate(dl_train):
             batch_para=batch_para.cuda()
             batch_traj=batch_traj.cuda()
             #print("batch_para size:", batch_para.shape)
@@ -466,7 +504,7 @@ def train(output_directory,
 
             n_iter += 1
 
-        epoch_train_loss=epoch_train_loss/ len(loader)
+        epoch_train_loss=epoch_train_loss/ len(dl_train)
         epoch_train_loss_all.append([epoch_train_loss])
         #print("iteration: {} \tepoch_train_loss: {}".format(n_iter, epoch_train_loss))
         np.save(os.path.join(output_directory, 'epoch_train_loss_all.npy'), epoch_train_loss_all)
@@ -478,7 +516,7 @@ def train(output_directory,
             ema.ema_model.eval()
             epoch_test_loss=0
             with torch.no_grad():
-              for i, (batch_para, batch_traj) in enumerate(test_loader):
+              for i, (batch_para, batch_traj) in enumerate(dl_test):
                   #calculate test loss
                   batch_para=batch_para.cuda()
                   batch_traj=batch_traj.cuda()
@@ -514,7 +552,7 @@ def train(output_directory,
                       original_para_test_all = torch.cat([original_para_test_all, batch_para], dim=0)
                   #np.save(os.path.join(output_directory, 'original_para_test_all_epoch{}.npy'.format(n_epoch)), original_para_test_all.detach().cpu().numpy())
 
-            epoch_test_loss=epoch_test_loss/ len(test_loader)
+            epoch_test_loss=epoch_test_loss/ len(dl_test)
             epoch_test_loss_all.append([epoch_test_loss])
             print("iteration: {} \tepoch_train_loss: {}".format(n_iter, epoch_train_loss))
             print("iteration: {} \tepoch_test_loss: {}".format(n_iter, epoch_test_loss))
@@ -527,7 +565,7 @@ def train(output_directory,
 
 
             with torch.no_grad():
-                for i, (batch_para, batch_traj) in enumerate(real_sp_loader):
+                for i, (batch_para, batch_traj) in enumerate(dl_real):
                     batch_para=batch_para.cuda()
                     batch_traj=batch_traj.cuda()
 
@@ -557,7 +595,7 @@ def train(output_directory,
             np.save(os.path.join(output_directory, 'original_para_real_sp_all_epoch{}.npy'.format(n_epoch)), original_para_real_sp_all.detach().cpu().numpy())
 
             with torch.no_grad():
-                for i, (batch_para, batch_traj) in enumerate(train_sp_loader):
+                for i, (batch_para, batch_traj) in enumerate(dl_train_stride):
                     batch_para=batch_para.cuda()
                     batch_traj=batch_traj.cuda()
 
@@ -593,7 +631,7 @@ def train(output_directory,
     ema.ema_model.eval()
 
     #for i, batch in enumerate(training_data):
-    for i, (batch_para, batch_traj) in enumerate(real_sp_loader):
+    for i, (batch_para, batch_traj) in enumerate(dl_real):
         batch_para=batch_para.cuda()
         batch_traj=batch_traj.cuda()
 
@@ -651,7 +689,7 @@ def train(output_directory,
 
     #############################train sampling###########################################
     #for i, batch in enumerate(training_data):
-    for i, (batch_para, batch_traj) in enumerate(train_sp_loader):
+    for i, (batch_para, batch_traj) in enumerate(dl_train_stride):
         batch_para=batch_para.cuda()
         batch_traj=batch_traj.cuda()
 
@@ -712,7 +750,7 @@ def train(output_directory,
     #############################test sampling###########################################
 
     #for i, batch in enumerate(training_data):
-    for i, (batch_para, batch_traj) in enumerate(test_loader):
+    for i, (batch_para, batch_traj) in enumerate(dl_test):
         batch_para=batch_para.cuda()
         batch_traj=batch_traj.cuda()
 
