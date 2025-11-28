@@ -28,7 +28,7 @@ python train_fq_inverse_JCDI_MEL_pre_release.py -c config_inverse/config_inverse
 ```
 
 ## Acknowledgement
-```
+
 Our code for the proposed model builds upon the diffusion model implementation provided by [SSSD](https://github.com/AI4HealthUOL/SSSD).
 We gratefully acknowledge the authors for releasing and maintaining their source code.
-```
+
