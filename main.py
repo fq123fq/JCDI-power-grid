@@ -5,24 +5,21 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from utils.util_pre_release import find_max_epoch, print_size, training_loss, calc_diffusion_hyperparams
+from utils.util import find_max_epoch, print_size, training_loss, calc_diffusion_hyperparams
 
 
-from powergrid_hybrid_eventmore_mNN_ind_tokenmore.powergrid_hybrid import PowerGridHybrid
-from powergrid_hybrid_eventmore_mNN_ind_tokenmore.resnet_1d import ResNetEncoder
+from mNN.powergrid_hybrid import PowerGridHybrid
+from mNN.resnet_1d import ResNetEncoder
 
 #import matplotlib.pyplot as plt
 
-from utils.util_pre_release import sampling
+from utils.util import sampling
 from sklearn.metrics import mean_squared_error
 from statistics import mean
 
 import time
 from ema_pytorch import EMA
 import mat73
-
-#run command:
-#python train_fq_inverse_JCDI_MEL_pre_release.py -c config_inverse/config_inverse_JCDI_MEL_pre_release.json
 
 
 loss_all = []
@@ -65,27 +62,6 @@ def train(output_directory,
           learning_rate,
           use_model):
           
-    
-    """
-    Train Diffusion Models
-
-    Parameters:
-    output_directory (str):         save model checkpoints to this path
-    ckpt_iter (int or 'max'):       the pretrained checkpoint to be loaded; 
-                                    automatically selects the maximum iteration if 'max' is selected
-    data_path (str):                path to dataset, numpy array.
-    n_iters (int):                  number of iterations to train
-    iters_per_ckpt (int):           number of iterations to save checkpoint, 
-                                    default is 10k, for models with residual_channel=64 this number can be larger
-    iters_per_logging (int):        number of iterations to save training log and compute validation loss, default is 100
-    learning_rate (float):          learning rate
-
-    use_model (int):                0:DiffWave. 1:SSSDSA. 2:SSSDS4.
-    only_generate_missing (int):    0:all sample diffusion.  1:only apply diffusion to missing portions of the signal
-    masking(str):                   'mnr': missing not at random, 'bm': blackout missing, 'rm': random missing
-    missing_k (int):                k missing time steps for each feature across the sample length.
-    """
-
     # generate experiment (local) path
 
     #output_directory_fq=output_directory
@@ -163,8 +139,6 @@ def train(output_directory,
         traj_q_mins.append(torch.min(torch.min(traj_q_gene_eventnow_merge_trs)))
         traj_q_maxs.append(torch.max(torch.max(traj_q_gene_eventnow_merge_trs)))
         
-        #traj_p_gene_eventnow_merge_trs_nom=(traj_p_gene_eventnow_merge_trs - traj_p_min_min) / (traj_p_max_max - traj_p_min_min)
-        #traj_q_gene_eventnow_merge_trs_nom=(traj_q_gene_eventnow_merge_trs - traj_q_min_min) / (traj_q_max_max - traj_q_min_min)
 
         traj_p_gene_eventnow_merge_trs_nom=(traj_p_gene_eventnow_merge_trs - traj_p_eventnow_min) / (traj_p_eventnow_max - traj_p_eventnow_min)
         traj_q_gene_eventnow_merge_trs_nom=(traj_q_gene_eventnow_merge_trs - traj_q_eventnow_min) / (traj_q_eventnow_max - traj_q_eventnow_min)
@@ -227,8 +201,8 @@ def train(output_directory,
 
     torch_dataset = Data.TensorDataset(training_para,training_traj_pq)
     #torch_test_dataset = Data.TensorDataset(testing_para,testing_traj_pq)
-    torch_train_sp_dataset = Data.TensorDataset(training_para[::50,:,:],training_traj_pq[::50,:,:,:])
-    torch_test_dataset = Data.TensorDataset(testing_para[::50,:,:],testing_traj_pq[::50,:,:,:])
+    torch_train_sp_dataset = Data.TensorDataset(training_para[::1,:,:],training_traj_pq[::1,:,:,:])
+    torch_test_dataset = Data.TensorDataset(testing_para[::1,:,:],testing_traj_pq[::1,:,:,:])
 
 
     train_batch_size=128
@@ -240,8 +214,6 @@ def train(output_directory,
     test_loader = DataLoader(torch_test_dataset, batch_size = test_batch_size, shuffle = True, pin_memory = True, num_workers = 0)
 
 
-    #training_data = torch.reshape(training_data, (31, 32, seq_length_fq, num_feature))
-    #print("training_data size:", training_data.shape)
     print('Data loaded')
 
     ####real  data preparation####
@@ -253,7 +225,6 @@ def train(output_directory,
     traj_q_gene_eventmore_merge_trs_real = data['traj_q_real_eventmore_merge_trs']
 
 
-    #   training_data = np.split(training_data, 42, 0)
     para_for_gene_eventmore_merge_trs_nom_real = torch.from_numpy(para_for_gene_eventmore_merge_trs_nom_real).float()
     traj_p_gene_eventmore_merge_trs_real = torch.from_numpy(traj_p_gene_eventmore_merge_trs_real).float()
     traj_q_gene_eventmore_merge_trs_real = torch.from_numpy(traj_q_gene_eventmore_merge_trs_real).float()
@@ -263,18 +234,12 @@ def train(output_directory,
     para_length_fq=30
     traj_length_fq=512
 
-    #training_traj_pq_eventmore=torch.empty((num_sample_all,n_events,2,traj_length_fq))
 
     for ii in range(n_events):
         traj_p_gene_eventnow_merge_trs_real=traj_p_gene_eventmore_merge_trs_real[:,ii,:].unsqueeze(1)
         traj_q_gene_eventnow_merge_trs_real=traj_q_gene_eventmore_merge_trs_real[:,ii,:].unsqueeze(1)
         print("traj_p_gene_eventnow_merge_trs_real.shape",traj_p_gene_eventnow_merge_trs_real.shape)
         
-        #traj_p_gene_eventnow_merge_trs_nom=(traj_p_gene_eventnow_merge_trs - traj_p_min_min) / (traj_p_max_max - traj_p_min_min)
-        #traj_q_gene_eventnow_merge_trs_nom=(traj_q_gene_eventnow_merge_trs - traj_q_min_min) / (traj_q_max_max - traj_q_min_min)
-
-        #traj_p_gene_eventnow_merge_trs_nom_real=(traj_p_gene_eventnow_merge_trs_real - traj_p_eventnow_min) / (traj_p_eventnow_max - traj_p_eventnow_min)
-        #traj_q_gene_eventnow_merge_trs_nom_real=(traj_q_gene_eventnow_merge_trs_real - traj_q_eventnow_min) / (traj_q_eventnow_max - traj_q_eventnow_min)
 
         traj_p_gene_eventnow_merge_trs_nom_real=(traj_p_gene_eventnow_merge_trs_real - traj_p_mins[ii]) / (traj_p_maxs[ii] - traj_p_mins[ii])
         traj_q_gene_eventnow_merge_trs_nom_real=(traj_q_gene_eventnow_merge_trs_real - traj_q_mins[ii]) / (traj_q_maxs[ii] - traj_q_mins[ii])
@@ -408,38 +373,13 @@ def train(output_directory,
         for i, (batch_para, batch_traj) in enumerate(loader):
             batch_para=batch_para.cuda()
             batch_traj=batch_traj.cuda()
-            #print("batch_para size:", batch_para.shape)
-            #print("batch_traj size:", batch_traj.shape)
-
-            #batch_para = batch_para.permute(0, 2, 1)
-
-            #print("mask.shape",mask.shape)
-            #print("mask[0]", mask[0])
-            #aa=mask[0][0]
-            #bb = mask[0][1]
-            #cc = mask[0][2]
-            #aa=aa.permute(1, 0)
-            #import matplotlib.pyplot as plt
-            #plt.figure()
-            ##plt.plot(mask[0].permute(1, 0))
-            #plt.plot(aa)
-            #plt.plot(bb)
-            #plt.plot(cc)
-            #plt.show()
 
 
             # back-propagation
             optimizer.zero_grad()
-            #            print("batch size:", batch.shape)
-            #           print("mask size:", mask.shape)
-            #           print("loss_mask size:", loss_mask.shape)
             X = batch_para, batch_traj
 
-            #pred_fq=net(batch_para, batch_traj, torch.ones(32,1))
-        
-            #X = batch, None, mask, loss_mask
             loss = training_loss(net, nn.MSELoss(), X, diffusion_hyperparams)
-            #loss = training_loss(net, nn.MSELoss(), batch_para, batch_traj, diffusion_hyperparams)
 
             loss.backward()
             optimizer.step()
@@ -468,7 +408,6 @@ def train(output_directory,
 
         epoch_train_loss=epoch_train_loss/ len(loader)
         epoch_train_loss_all.append([epoch_train_loss])
-        #print("iteration: {} \tepoch_train_loss: {}".format(n_iter, epoch_train_loss))
         np.save(os.path.join(output_directory, 'epoch_train_loss_all.npy'), epoch_train_loss_all)
 
         # test
@@ -489,13 +428,11 @@ def train(output_directory,
 
                   epoch_test_loss=epoch_test_loss+test_loss.item()
 
+                  '''
                   #sample test traj and calculate parameter error
                   num_samples = batch_para.size(0)
                   sample_length = batch_para.size(2)
                   sample_channels = batch_para.size(1)
-                  #print("num_samples:", num_samples)
-                  #print("sample_length:", sample_length)
-                  #print("sample_channels:", sample_channels)
                   predict_para = sampling(ema.ema_model, (num_samples, sample_channels, sample_length),
                                                  diffusion_hyperparams,
                                                  cond=batch_traj)
@@ -505,7 +442,6 @@ def train(output_directory,
                   else:
                       predict_para_test_all = torch.cat([predict_para_test_all, predict_para], dim=0)
 
-                  #np.save(os.path.join(output_directory, 'predict_para_test_all_epoch{}.npy'.format(n_epoch)), predict_para_test_all.detach().cpu().numpy())
         
 
                   if i == 0:
@@ -513,6 +449,7 @@ def train(output_directory,
                   else:
                       original_para_test_all = torch.cat([original_para_test_all, batch_para], dim=0)
                   #np.save(os.path.join(output_directory, 'original_para_test_all_epoch{}.npy'.format(n_epoch)), original_para_test_all.detach().cpu().numpy())
+                  '''
 
             epoch_test_loss=epoch_test_loss/ len(test_loader)
             epoch_test_loss_all.append([epoch_test_loss])
@@ -522,10 +459,10 @@ def train(output_directory,
             n_epoches_all.append([n_epoch])
             np.savez(os.path.join(output_directory, 'epoch_train_test_losses_all'), epoch_train_loss_all=epoch_train_loss_all,epoch_test_loss_all=epoch_test_loss_all,n_iters_all=n_iters_all,n_epoches_all=n_epoches_all)
 
-            np.save(os.path.join(output_directory, 'predict_para_test_all_epoch{}.npy'.format(n_epoch)), predict_para_test_all.detach().cpu().numpy())
-            np.save(os.path.join(output_directory, 'original_para_test_all_epoch{}.npy'.format(n_epoch)), original_para_test_all.detach().cpu().numpy())
+            #np.save(os.path.join(output_directory, 'predict_para_test_all_epoch{}.npy'.format(n_epoch)), predict_para_test_all.detach().cpu().numpy())
+            #np.save(os.path.join(output_directory, 'original_para_test_all_epoch{}.npy'.format(n_epoch)), original_para_test_all.detach().cpu().numpy())
 
-
+            '''
             with torch.no_grad():
                 for i, (batch_para, batch_traj) in enumerate(real_sp_loader):
                     batch_para=batch_para.cuda()
@@ -544,14 +481,12 @@ def train(output_directory,
                     else:
                         predict_para_real_sp_all = torch.cat([predict_para_real_sp_all, predict_para], dim=0)
 
-                    #np.save(os.path.join(output_directory, 'predict_para_real_sp_all_epoch{}.npy'.format(n_epoch)), predict_para_real_sp_all.detach().cpu().numpy())   
 
                     if i == 0:
                         original_para_real_sp_all = batch_para
                     else:
                         original_para_real_sp_all = torch.cat([original_para_real_sp_all, batch_para], dim=0)
 
-                    #np.save(os.path.join(output_directory, 'original_para_real_sp_all_epoch{}.npy'.format(n_epoch)), original_para_real_sp_all.detach().cpu().numpy())
 
             np.save(os.path.join(output_directory, 'predict_para_real_sp_all_epoch{}.npy'.format(n_epoch)), predict_para_real_sp_all.detach().cpu().numpy())  
             np.save(os.path.join(output_directory, 'original_para_real_sp_all_epoch{}.npy'.format(n_epoch)), original_para_real_sp_all.detach().cpu().numpy())
@@ -574,61 +509,43 @@ def train(output_directory,
                     else:
                         predict_para_train_sp_all = torch.cat([predict_para_train_sp_all, predict_para], dim=0)
 
-                    #np.save(os.path.join(output_directory, 'predict_para_real_sp_all_epoch{}.npy'.format(n_epoch)), predict_para_real_sp_all.detach().cpu().numpy())   
 
                     if i == 0:
                         original_para_train_sp_all = batch_para
                     else:
                         original_para_train_sp_all = torch.cat([original_para_train_sp_all, batch_para], dim=0)
 
-                    #np.save(os.path.join(output_directory, 'original_para_real_sp_all_epoch{}.npy'.format(n_epoch)), original_para_real_sp_all.detach().cpu().numpy())
 
             np.save(os.path.join(output_directory, 'predict_para_train_sp_all_epoch{}.npy'.format(n_epoch)), predict_para_train_sp_all.detach().cpu().numpy())  
             np.save(os.path.join(output_directory, 'original_para_train_sp_all_epoch{}.npy'.format(n_epoch)), original_para_train_sp_all.detach().cpu().numpy())
+            '''
 
-
-
+    print('Training finished.')
 
     #############################real sampling###########################################
     ema.ema_model.eval()
+
+    print('sampling from real trajectories.')
 
     #for i, batch in enumerate(training_data):
     for i, (batch_para, batch_traj) in enumerate(real_sp_loader):
         batch_para=batch_para.cuda()
         batch_traj=batch_traj.cuda()
 
-        #batch_para = batch_para.permute(0, 2, 1)
-
-        #print("mask.shape",mask.shape)
-        #print("mask[0]", mask[0])
-        #plt.figure()
-        #plt.plot(mask[0].permute(1, 0))
-        #plt.show()
-
-        #       start = torch.Event(enable_timing=True)
-        #       end = torch.Event(enable_timing=True)
-        #       start.record()
         num_samples = batch_para.size(0)
         sample_length = batch_para.size(2)
         sample_channels = batch_para.size(1)
-        print("num_samples:", num_samples)
-        print("sample_length:", sample_length)
-        print("sample_channels:", sample_channels)
         T3 = time.time()
         predict_para = sampling(ema.ema_model, (num_samples, sample_channels, sample_length),
                                        diffusion_hyperparams,
                                        cond=batch_traj)
                                        
         T4 = time.time()
-        print('程序运行时间:%s毫秒' % ((T4 - T3) * 1000))
-        print("okok1")
 
         if i == 0:
             predict_para_real_all = predict_para
         else:
             predict_para_real_all = torch.cat([predict_para_real_all, predict_para], dim=0)
-        #np.save(
-        #    "results/inverse_nomask/event1_12para_s_uniform/predict_para_train_all.npy", predict_para_train_all)
         np.save(os.path.join(output_directory, 'predict_para_real_all.npy'), predict_para_real_all.detach().cpu().numpy())
         
 
@@ -636,59 +553,32 @@ def train(output_directory,
             original_para_real_all = batch_para
         else:
             original_para_real_all = torch.cat([original_para_real_all, batch_para], dim=0)
-        #np.save(
-        #    "results/inverse_nomask/event1_12para_s_uniform/original_para_train_all.npy", original_para_train_all)
         np.save(os.path.join(output_directory, 'original_para_real_all.npy'), original_para_real_all.detach().cpu().numpy())
 
         predict_para = predict_para.detach().cpu().numpy()
         batch_para = batch_para.detach().cpu().numpy()
 
-        print("predict_para:",predict_para.shape)
-        print("predict_para_real_all:", predict_para_real_all.shape)
-        print("original_para_real_all:", original_para_real_all.shape)
-        print("batch_para:", batch_para.shape)
 
 
     #############################train sampling###########################################
-    #for i, batch in enumerate(training_data):
+    print('sampling from training trajectories.')
     for i, (batch_para, batch_traj) in enumerate(train_sp_loader):
         batch_para=batch_para.cuda()
         batch_traj=batch_traj.cuda()
 
-        print("batch_para.size:", batch_para.size)
 
-        #batch_para = batch_para.permute(0, 2, 1)
-
-        #print("mask.shape",mask.shape)
-        #print("mask[0]", mask[0])
-        #plt.figure()
-        #plt.plot(mask[0].permute(1, 0))
-        #plt.show()
-
-        #       start = torch.Event(enable_timing=True)
-        #       end = torch.Event(enable_timing=True)
-        #       start.record()
         num_samples = batch_para.size(0)
         sample_length = batch_para.size(2)
         sample_channels = batch_para.size(1)
-        print("num_samples:", num_samples)
-        print("sample_length:", sample_length)
-        print("sample_channels:", sample_channels)
-        T3 = time.time()
         predict_para = sampling(ema.ema_model, (num_samples, sample_channels, sample_length),
                                        diffusion_hyperparams,
                                        cond=batch_traj)
                                        
-        T4 = time.time()
-        print('程序运行时间:%s毫秒' % ((T4 - T3) * 1000))
-        print("okok1")
 
         if i == 0:
             predict_para_train_all = predict_para
         else:
             predict_para_train_all = torch.cat([predict_para_train_all, predict_para], dim=0)
-        #np.save(
-        #    "results/inverse_nomask/event1_12para_s_uniform/predict_para_train_all.npy", predict_para_train_all)
         np.save(os.path.join(output_directory, 'predict_para_train_all.npy'), predict_para_train_all.detach().cpu().numpy())
         
 
@@ -696,58 +586,30 @@ def train(output_directory,
             original_para_train_all = batch_para
         else:
             original_para_train_all = torch.cat([original_para_train_all, batch_para], dim=0)
-        #np.save(
-        #    "results/inverse_nomask/event1_12para_s_uniform/original_para_train_all.npy", original_para_train_all)
         np.save(os.path.join(output_directory, 'original_para_train_all.npy'), original_para_train_all.detach().cpu().numpy())
 
         predict_para = predict_para.detach().cpu().numpy()
         batch_para = batch_para.detach().cpu().numpy()
 
-        print("predict_para:",predict_para.shape)
-        print("predict_para_train_all:", predict_para_train_all.shape)
-        print("original_para_train_all:", original_para_train_all.shape)
-        print("batch_para:", batch_para.shape)
-
 
     #############################test sampling###########################################
-
-    #for i, batch in enumerate(training_data):
+    print('sampling from testing trajectories.')
     for i, (batch_para, batch_traj) in enumerate(test_loader):
         batch_para=batch_para.cuda()
         batch_traj=batch_traj.cuda()
 
-        #batch_para = batch_para.permute(0, 2, 1)
-
-        #print("mask.shape",mask.shape)
-        #print("mask[0]", mask[0])
-        #plt.figure()
-        #plt.plot(mask[0].permute(1, 0))
-        #plt.show()
-
-        #       start = torch.Event(enable_timing=True)
-        #       end = torch.Event(enable_timing=True)
-        #       start.record()
         num_samples = batch_para.size(0)
         sample_length = batch_para.size(2)
         sample_channels = batch_para.size(1)
-        print("num_samples:", num_samples)
-        print("sample_length:", sample_length)
-        print("sample_channels:", sample_channels)
-        T3 = time.time()
         predict_para = sampling(ema.ema_model, (num_samples, sample_channels, sample_length),
                                        diffusion_hyperparams,
                                        cond=batch_traj)
                                        
-        T4 = time.time()
-        print('程序运行时间:%s毫秒' % ((T4 - T3) * 1000))
-        print("okok1")
 
         if i == 0:
             predict_para_test_all = predict_para
         else:
             predict_para_test_all = torch.cat([predict_para_test_all, predict_para], dim=0)
-        #np.save(
-        #    "results/inverse_nomask/event1_12para_s_uniform/predict_para_train_all.npy", predict_para_train_all)
         np.save(os.path.join(output_directory, 'predict_para_test_all.npy'), predict_para_test_all.detach().cpu().numpy())
         
 
@@ -755,8 +617,6 @@ def train(output_directory,
             original_para_test_all = batch_para
         else:
             original_para_test_all = torch.cat([original_para_test_all, batch_para], dim=0)
-        #np.save(
-        #    "results/inverse_nomask/event1_12para_s_uniform/original_para_train_all.npy", original_para_train_all)
         np.save(os.path.join(output_directory, 'original_para_test_all.npy'), original_para_test_all.detach().cpu().numpy())
 
         predict_para = predict_para.detach().cpu().numpy()
@@ -765,7 +625,7 @@ def train(output_directory,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default='config/SSSDS4_fq.json',
+    parser.add_argument('-c', '--config', type=str, default='config/config_JCDI.json',
                         help='JSON file for configuration')
 
     args = parser.parse_args()
