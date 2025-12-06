@@ -10,7 +10,7 @@ Amirthagunaraj Yogarathnam,
 Yihui Ren, 
 Meng Yue
 
-\* core contributor
+\* equal contribution
 
 [[`Paper`](https://arxiv.org/abs/2411.10431)]
 [[`BibTeX`](#citing-JCDI)]
@@ -25,7 +25,7 @@ Successful verification of JCDI has been achieved for composite load model param
 
 ## Install the requiered libraries 
 ```
-conda env create -f JCDI_env.yaml
+conda env create -f JCDI_env.yml
 ```
 
 ## Datasets
