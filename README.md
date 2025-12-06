@@ -7,10 +7,10 @@ Dmitrii Torbunov\*,
 Zhongjing Jiang, 
 Tianqiao Zhao, 
 Amirthagunaraj Yogarathnam, 
-Yihui Ren, 
-Meng Yue
+Yihui Ren†, 
+Meng Yue†
 
-\* equal contribution
+\* equal contribution, † supervisors
 
 [[`Paper`](https://arxiv.org/abs/2411.10431)]
 [[`BibTeX`](#citing-JCDI)]
