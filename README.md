@@ -1,5 +1,5 @@
-# JCDI: Joint Conditional Diffusion Model-based Inverse problem Solver
-This is the repository for the preprint [Diffusion Model-based Parameter Estimation in Dynamic Power Systems](https://arxiv.org/abs/2411.10431).
+# JCDI: Joint Conditional Diffusion Model-based Inverse Problem Solver
+This is the repository for the paper [Diffusion Model-based Parameter Estimation in Dynamic Power Systems](https://www.nature.com/articles/s44172-026-00670-z), which has been published in *Communications Engineering*.
 
 **Authors:**
 Feiqin Zhu\*, 
@@ -12,10 +12,10 @@ Meng Yue†
 
 \* equal contribution, † supervisors
 
-[[`Paper`](https://arxiv.org/abs/2411.10431)]
+[[`Paper`](https://www.nature.com/articles/s44172-026-00670-z)]
 [[`BibTeX`](#citing-JCDI)]
 
-![JCDI-framework](/assets/JCDI-framework.jpg "JCDI-framework")
+![JCDI-framework](/assets/JCDI-framework-update.jpg "JCDI-framework")
 
 We present a novel probabilistic parameter estimation framework based on the generative diffusion model, named *Joint Conditional Diffusion Model-based Inverse Problem Solver* (JCDI). 
 In this framework, we train the conditional diffusion model to learn the inherent distributions within parameter space and provide a data-driven solution for parameter estimation.
@@ -29,25 +29,28 @@ conda env create -f JCDI_env.yml
 ```
 
 ## Datasets
-* Dataset in our experiment can be downloaded at [this link](https://drive.google.com/drive/folders/1_ntBnNasDw7eaLQs3zlGaPJ9-GpB4BFa?usp=sharing).
-* Put the data files in the folder "data_set_inverse“.
+* Datasets for this work, including datasets for training and evaluation, trained model checkpoints, and source data for graphs and charts, have been deposited in the Zenodo Repository: [JCDI dataset](https://zenodo.org/records/18980716).
+* To train the model, create a new folder named "data_set_inverse" and put the data files for training and evaluation in the folder.
 
 ## Train JCDI
 ```
 python main.py -c config_inverse/config_JCDI.json
 ```
 
+## Overall flowchart of JCDI implementation
+In addition to training, the overall flowchart of JCDI implementation is shown below. It includes six modules: sensitivity analysis, data generation, model training, parameter inference, dynamic response prediction, and result visualization & analysis.
+
+![JCDI-flowchart](/assets/JCDI-flowchart.jpg "JCDI-flowchart")
+
 ## Citing JCDI
-Please cite the preprint if you find this repository helpful.
+If you find this repository helpful, please cite the paper using the following BibTeX entry.
 ```
-@misc{zhu2025diffusionmodelbasedparameterestimation,
-      title={Diffusion Model-based Parameter Estimation in Dynamic Power Systems}, 
-      author={Feiqin Zhu and Dmitrii Torbunov and Zhongjing Jiang and Tianqiao Zhao and Amirthagunaraj Yogarathnam and Yihui Ren and Meng Yue},
-      year={2025},
-      eprint={2411.10431},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2411.10431}, 
+@article{zhu2026diffusion,
+  title={Diffusion model-based parameter estimation in dynamic power systems},
+  author={Zhu, Feiqin and Torbunov, Dmitrii and Jiang, Zhongjing and Zhao, Tianqiao and Yogarathnam, Amirthagunaraj and Ren, Yihui and Yue, Meng},
+  journal={Communications Engineering},
+  year={2026},
+  doi={https://doi.org/10.1038/s44172-026-00670-z}
 }
 ```
 
